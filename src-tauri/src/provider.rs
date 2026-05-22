@@ -247,6 +247,19 @@ pub enum ClaudeDesktopMode {
     Proxy,
 }
 
+/// OpenCode provider kind classification.
+/// - `internal_credential_only`: built-in provider only needs credentials (e.g. anthropic, openai);
+///   no full config write to opencode.json required.
+/// - `custom`: third-party provider that requires a full `OpenCodeProviderConfig` write
+///   (including `npm`) to opencode.json.
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq, Default)]
+#[serde(rename_all = "snake_case")]
+pub enum OpenCodeProviderKind {
+    #[default]
+    Custom,
+    InternalCredentialOnly,
+}
+
 /// Claude Desktop 本地路由模式下暴露给 Desktop 的安全模型路由。
 #[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
 #[serde(rename_all = "camelCase")]
@@ -343,6 +356,34 @@ pub struct ProviderMeta {
     /// `None` 表示旧数据/未知状态，`Some(false)` 表示明确仅存在于数据库中。
     #[serde(rename = "liveConfigManaged", skip_serializing_if = "Option::is_none")]
     pub live_config_managed: Option<bool>,
+    /// OpenCode provider kind classification.
+    /// - `internal_credential_only`: only needs credential auth, no full config write required.
+    /// - `custom`: requires full `OpenCodeProviderConfig` write (including `npm`).
+    #[serde(
+        rename = "opencodeProviderKind",
+        skip_serializing_if = "Option::is_none"
+    )]
+    pub opencode_provider_kind: Option<OpenCodeProviderKind>,
+    /// Whether this provider is an OpenCode internal/builtin provider (e.g. anthropic, openai).
+    #[serde(
+        rename = "opencodeInternalProvider",
+        skip_serializing_if = "Option::is_none"
+    )]
+    pub opencode_internal_provider: Option<bool>,
+    /// Whether this provider only needs credentials written to auth.json
+    /// (no full config section in opencode.json).
+    #[serde(
+        rename = "opencodeCredentialOnly",
+        skip_serializing_if = "Option::is_none"
+    )]
+    pub opencode_credential_only: Option<bool>,
+    /// The OpenCode builtin provider ID (e.g. "anthropic", "openai", "google").
+    /// Only set when `opencodeInternalProvider=true`.
+    #[serde(
+        rename = "opencodeBuiltinProviderId",
+        skip_serializing_if = "Option::is_none"
+    )]
+    pub opencode_builtin_provider_id: Option<String>,
     /// 供应商类型标识（用于特殊供应商检测）
     /// - "github_copilot": GitHub Copilot 供应商
     #[serde(rename = "providerType", skip_serializing_if = "Option::is_none")]
@@ -377,6 +418,27 @@ impl ProviderMeta {
         }
 
         None
+    }
+
+    /// Returns true if this provider is an OpenCode credential-only provider.
+    /// Such providers only need their credentials written to auth.json;
+    /// no full config write to opencode.json is required.
+    pub fn is_open_code_credential_only_provider(&self) -> bool {
+        self.opencode_credential_only.unwrap_or(false)
+            && self.opencode_provider_kind == Some(OpenCodeProviderKind::InternalCredentialOnly)
+    }
+
+    /// Returns true if a full OpenCode provider config should be written
+    /// to opencode.json for this provider.
+    /// - Credential-only providers: false (only auth.json write needed).
+    /// - Custom providers with liveConfigManaged: true.
+    /// - All other cases: false.
+    pub fn should_write_opencode_provider_config(&self) -> bool {
+        if self.is_open_code_credential_only_provider() {
+            return false;
+        }
+        self.opencode_provider_kind == Some(OpenCodeProviderKind::Custom)
+            && self.live_config_managed.unwrap_or(false)
     }
 }
 
@@ -776,8 +838,8 @@ pub struct OpenCodeModelLimit {
 #[cfg(test)]
 mod tests {
     use super::{
-        ClaudeModelConfig, CodexModelConfig, GeminiModelConfig, OpenCodeProviderConfig, Provider,
-        ProviderManager, ProviderMeta, UniversalProvider,
+        ClaudeModelConfig, CodexModelConfig, GeminiModelConfig, OpenCodeProviderConfig,
+        OpenCodeProviderKind, Provider, ProviderManager, ProviderMeta, UniversalProvider,
     };
     use serde_json::json;
 
@@ -1126,5 +1188,165 @@ mod tests {
 
         assert!(toml.contains("base_url = \"https://example.com/openai\""));
         assert!(!toml.contains("https://example.com/openai/v1"));
+    }
+
+    #[test]
+    fn provider_meta_serializes_opencode_provider_kind_fields() {
+        let meta = ProviderMeta {
+            opencode_provider_kind: Some(OpenCodeProviderKind::InternalCredentialOnly),
+            opencode_internal_provider: Some(true),
+            opencode_credential_only: Some(true),
+            opencode_builtin_provider_id: Some("anthropic".to_string()),
+            live_config_managed: Some(false),
+            ..ProviderMeta::default()
+        };
+
+        let value = serde_json::to_value(&meta).expect("serialize ProviderMeta");
+
+        assert_eq!(
+            value.get("opencodeProviderKind").and_then(|v| v.as_str()),
+            Some("internal_credential_only")
+        );
+        assert_eq!(
+            value
+                .get("opencodeInternalProvider")
+                .and_then(|v| v.as_bool()),
+            Some(true)
+        );
+        assert_eq!(
+            value
+                .get("opencodeCredentialOnly")
+                .and_then(|v| v.as_bool()),
+            Some(true)
+        );
+        assert_eq!(
+            value
+                .get("opencodeBuiltinProviderId")
+                .and_then(|v| v.as_str()),
+            Some("anthropic")
+        );
+        assert_eq!(
+            value.get("liveConfigManaged").and_then(|v| v.as_bool()),
+            Some(false)
+        );
+
+        assert!(value.get("opencode_provider_kind").is_none());
+        assert!(value.get("opencode_internal_provider").is_none());
+        assert!(value.get("opencode_credential_only").is_none());
+        assert!(value.get("opencode_builtin_provider_id").is_none());
+
+        let deserialized: ProviderMeta =
+            serde_json::from_value(value).expect("deserialize ProviderMeta");
+        assert_eq!(
+            deserialized.opencode_provider_kind,
+            Some(OpenCodeProviderKind::InternalCredentialOnly)
+        );
+        assert_eq!(deserialized.opencode_internal_provider, Some(true));
+        assert_eq!(deserialized.opencode_credential_only, Some(true));
+        assert_eq!(
+            deserialized.opencode_builtin_provider_id,
+            Some("anthropic".to_string())
+        );
+        assert_eq!(deserialized.live_config_managed, Some(false));
+    }
+
+    #[test]
+    fn provider_meta_backward_compatibility() {
+        let old_json = json!({
+            "pricingModelSource": "response",
+            "liveConfigManaged": true
+        });
+
+        let meta: ProviderMeta =
+            serde_json::from_value(old_json).expect("deserialize old ProviderMeta JSON");
+
+        assert_eq!(meta.pricing_model_source, Some("response".to_string()));
+        assert_eq!(meta.live_config_managed, Some(true));
+        assert!(meta.opencode_provider_kind.is_none());
+        assert!(meta.opencode_internal_provider.is_none());
+        assert!(meta.opencode_credential_only.is_none());
+        assert!(meta.opencode_builtin_provider_id.is_none());
+    }
+
+    #[test]
+    fn helper_detects_internal_credential_only_provider() {
+        let meta = ProviderMeta {
+            opencode_credential_only: Some(true),
+            opencode_provider_kind: Some(OpenCodeProviderKind::InternalCredentialOnly),
+            ..ProviderMeta::default()
+        };
+
+        assert!(meta.is_open_code_credential_only_provider());
+        assert!(!meta.should_write_opencode_provider_config());
+    }
+
+    #[test]
+    fn helper_allows_custom_provider_write_path() {
+        let meta = ProviderMeta {
+            opencode_provider_kind: Some(OpenCodeProviderKind::Custom),
+            live_config_managed: Some(true),
+            ..ProviderMeta::default()
+        };
+
+        assert!(!meta.is_open_code_credential_only_provider());
+        assert!(meta.should_write_opencode_provider_config());
+    }
+
+    #[test]
+    fn empty_settings_config_is_allowed_only_with_credential_only_meta() {
+        let credential_only_meta = ProviderMeta {
+            opencode_credential_only: Some(true),
+            opencode_provider_kind: Some(OpenCodeProviderKind::InternalCredentialOnly),
+            ..ProviderMeta::default()
+        };
+
+        let no_meta: Option<ProviderMeta> = None;
+
+        let empty_settings = json!({});
+
+        let credential_only_provider = Provider {
+            id: "anthropic".to_string(),
+            name: "Anthropic".to_string(),
+            settings_config: empty_settings.clone(),
+            website_url: None,
+            category: None,
+            created_at: None,
+            sort_index: None,
+            notes: None,
+            meta: Some(credential_only_meta),
+            icon: None,
+            icon_color: None,
+            in_failover_queue: false,
+        };
+
+        let no_meta_provider = Provider {
+            id: "some-custom".to_string(),
+            name: "Some Custom".to_string(),
+            settings_config: empty_settings,
+            website_url: None,
+            category: None,
+            created_at: None,
+            sort_index: None,
+            notes: None,
+            meta: no_meta,
+            icon: None,
+            icon_color: None,
+            in_failover_queue: false,
+        };
+
+        assert!(credential_only_provider
+            .meta
+            .as_ref()
+            .unwrap()
+            .is_open_code_credential_only_provider());
+
+        assert!(
+            no_meta_provider.meta.is_none()
+                || !no_meta_provider
+                    .meta
+                    .as_ref()
+                    .map(|m| m.is_open_code_credential_only_provider())
+                    .unwrap_or(false)
+        );
     }
 }
