@@ -22,9 +22,7 @@ pub struct ProviderKeyDiscoveryResult {
 }
 
 pub fn get_opencode_cache_dir() -> PathBuf {
-    get_home_dir()
-        .join(".cache")
-        .join("opencode")
+    get_home_dir().join(".cache").join("opencode")
 }
 
 pub fn get_opencode_models_cache_path() -> PathBuf {
@@ -41,7 +39,10 @@ pub fn read_opencode_models_cache_provider_keys() -> HashSet<String> {
     let content = match std::fs::read_to_string(&path) {
         Ok(c) => c,
         Err(e) => {
-            log::warn!("Failed to read OpenCode models cache ({}): {e}", path.display());
+            log::warn!(
+                "Failed to read OpenCode models cache ({}): {e}",
+                path.display()
+            );
             return HashSet::new();
         }
     };
@@ -49,7 +50,10 @@ pub fn read_opencode_models_cache_provider_keys() -> HashSet<String> {
     let parsed: Value = match serde_json::from_str(&content) {
         Ok(v) => v,
         Err(e) => {
-            log::warn!("Failed to parse OpenCode models cache ({}): {e}", path.display());
+            log::warn!(
+                "Failed to parse OpenCode models cache ({}): {e}",
+                path.display()
+            );
             return HashSet::new();
         }
     };
@@ -80,10 +84,7 @@ pub fn discover_opencode_provider_keys() -> Result<ProviderKeyDiscoveryResult, A
     let internal_keys: HashSet<String> = read_opencode_models_cache_provider_keys();
 
     let all_keys: Vec<String> = {
-        let mut combined: Vec<String> = config_keys
-            .union(&auth_keys)
-            .cloned()
-            .collect();
+        let mut combined: Vec<String> = config_keys.union(&auth_keys).cloned().collect();
         combined.sort();
         combined
     };
@@ -241,13 +242,12 @@ mod tests {
         .unwrap();
 
         let keys = read_opencode_models_cache_provider_keys();
-        let expected: HashSet<String> =
-            ["anthropic", "openai", "google"].into_iter().map(String::from).collect();
+        let expected: HashSet<String> = ["anthropic", "openai", "google"]
+            .into_iter()
+            .map(String::from)
+            .collect();
 
-assert_eq!(keys.len(), 3);
-        assert!(keys.contains("anthropic"));
-        assert!(keys.contains("openai"));
-        assert!(keys.contains("google"));
+        assert_eq!(keys, expected);
     }
 
     #[test]
@@ -319,7 +319,10 @@ assert_eq!(keys.len(), 3);
         .unwrap();
 
         let result = discover_opencode_provider_keys().unwrap();
-        assert!(result.keys.is_empty(), "internal-only keys should not appear as discovered keys");
+        assert!(
+            result.keys.is_empty(),
+            "internal-only keys should not appear as discovered keys"
+        );
         assert!(result.config_keys.is_empty());
         assert!(result.auth_keys.is_empty());
         assert_eq!(result.internal_keys.len(), 2);
@@ -401,7 +404,10 @@ assert_eq!(keys.len(), 3);
         fs::write(th.auth_path(), "{invalid}").unwrap();
 
         let result = discover_opencode_provider_keys();
-        assert!(result.is_err(), "invalid auth.json should propagate error per stage1 safety rules");
+        assert!(
+            result.is_err(),
+            "invalid auth.json should propagate error per stage1 safety rules"
+        );
     }
 
     #[test]
@@ -470,5 +476,70 @@ assert_eq!(keys.len(), 3);
         let path = get_opencode_models_cache_path();
         assert_eq!(path.file_name().unwrap(), "models.json");
         assert!(path.to_string_lossy().contains(".cache"));
+    }
+
+    #[test]
+    #[serial]
+    fn discover_internal_partial_override_without_npm() {
+        let th = TempHome::new();
+        fs::write(
+            th.config_path(),
+            r#"{
+                "$schema": "https://opencode.ai/config.json",
+                "provider": {
+                    "anthropic": {
+                        "options": {
+                            "baseURL": "https://example.com"
+                        }
+                    }
+                }
+            }"#,
+        )
+        .unwrap();
+        fs::write(
+            th.models_cache_path(),
+            r#"{"anthropic": {"id": "anthropic"}}"#,
+        )
+        .unwrap();
+
+        let result = discover_opencode_provider_keys().unwrap();
+        assert_eq!(result.keys.len(), 1);
+        assert_eq!(result.keys[0].key, "anthropic");
+        assert!(result.keys[0].has_config);
+        assert!(!result.keys[0].has_auth);
+        assert!(result.keys[0].is_internal);
+        assert_eq!(result.config_keys.len(), 1);
+        assert!(result.auth_keys.is_empty());
+        assert!(result.internal_keys.contains(&"anthropic".to_string()));
+    }
+
+    #[test]
+    #[serial]
+    fn discover_non_internal_partial_config_remains_non_internal() {
+        let th = TempHome::new();
+        fs::write(
+            th.config_path(),
+            r#"{
+                "$schema": "https://opencode.ai/config.json",
+                "provider": {
+                    "some-custom": {
+                        "options": {
+                            "baseURL": "https://example.com"
+                        }
+                    }
+                }
+            }"#,
+        )
+        .unwrap();
+
+        let result = discover_opencode_provider_keys().unwrap();
+        assert_eq!(result.keys.len(), 1);
+        assert_eq!(result.keys[0].key, "some-custom");
+        assert!(result.keys[0].has_config);
+        assert!(!result.keys[0].has_auth);
+        assert!(!result.keys[0].is_internal);
+        assert_eq!(result.config_keys.len(), 1);
+        assert!(result.auth_keys.is_empty());
+        assert!(result.internal_keys.is_empty());
     }
 }

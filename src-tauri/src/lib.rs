@@ -1268,7 +1268,7 @@ pub fn run() {
             commands::sync_universal_provider,
             // OpenCode specific
             commands::import_opencode_providers_from_live,
-            commands::discover_opencode_provider_keys,
+            commands::get_opencode_live_provider_ids,
             commands::discover_opencode_provider_keys,
             // OpenClaw specific
             commands::import_openclaw_providers_from_live,

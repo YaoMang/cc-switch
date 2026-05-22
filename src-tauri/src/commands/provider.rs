@@ -740,9 +740,9 @@ pub fn get_opencode_live_provider_ids() -> Result<Vec<String>, String> {
 }
 
 #[tauri::command]
-pub fn discover_opencode_provider_keys() -> Result<crate::opencode_discovery::ProviderKeyDiscoveryResult, String> {
-    crate::opencode_discovery::discover_opencode_provider_keys()
-        .map_err(|e| e.to_string())
+pub fn discover_opencode_provider_keys(
+) -> Result<crate::opencode_discovery::ProviderKeyDiscoveryResult, String> {
+    crate::opencode_discovery::discover_opencode_provider_keys().map_err(|e| e.to_string())
 }
 
 // ============================================================================
