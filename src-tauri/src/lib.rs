@@ -21,6 +21,7 @@ mod mcp;
 mod openclaw_config;
 mod opencode_auth;
 mod opencode_config;
+mod opencode_discovery;
 mod panic_hook;
 mod prompt;
 mod prompt_files;
@@ -1268,6 +1269,7 @@ pub fn run() {
             // OpenCode specific
             commands::import_opencode_providers_from_live,
             commands::get_opencode_live_provider_ids,
+            commands::discover_opencode_provider_keys,
             // OpenClaw specific
             commands::import_openclaw_providers_from_live,
             commands::get_openclaw_live_provider_ids,
